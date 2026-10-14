@@ -27,6 +27,15 @@ Tests which need excluded
 proprietary build inputs skip as the upstream suite does. These are **host
 tests**; they do not attest a photographed result or safe target-side loading.
 
+Radium's [offline review of the original PR #3 candidate](https://github.com/radium-wang/Hasselblad-X-System-CIM-Firmware-Research-Feature-Extensions/blob/main/x2d/research/4.2.0/MONOCHROME-CANDIDATE-REVIEW.md)
+identified a source-frame release hazard when a copy callback returned an
+aliased handle. This revision gates both JPEG and HEIF release on a distinct
+handle and disjoint mapped pixel spans. A failed or unverified copy poisons
+the route without calling the release callback; the original frame stays
+untouched. New alias-success and alias-failure fault injections pass offline.
+This prevents the identified callback path in the host model, but it does not
+prove physical VMem ownership or the device ABI.
+
 ## Integration gates for the device maintainer
 
 1. Build an ARM64 `camera-service` module against exact CFV 4.2.0 vendor
@@ -72,3 +81,5 @@ false result.
 这是基于当前公开 Shuaqi 主线（稳定基线 0.4.12） 的源码级黑白功能提案，不是可直接安装的相机版本。目标是同一张照片的实时取景、JPEG/HEIF 为黑白，而 `.3FR` RAW 保持彩色；开关在完全关机后仍保持选择，并可通过独立 USB 恢复流程撤回。我们已实现并在电脑上测试私有帧转换、JPEG/HEIF 桥接边界、取景帧处理、菜单控制及可逆事务；没有提交原厂固件或提取的相机文件。
 
 请协助验证三个厂商接口：JPEG 的完整帧结构、VMem 参数和编码结束时机；Wayland 取景对象的引用与释放规则；HEIF 格式 1003 的 10 位打包方式和中性 UV 值。在三路均实际运行且独立恢复可用之前，菜单不会允许开启黑白模式。欢迎直接在这些源码文件上修改和测试，我们会按你的实际结果补齐下一版。
+
+根据你对原 PR #3 的离线审查，本次修订已在 JPEG／HEIF 路径加入别名句柄与映射像素重叠的拒绝逻辑。复制失败或独立所有权未经验证时不调用释放回调，并在主机测试中覆盖成功／失败两种别名注入。实机 VMem 所有权和 ABI 仍需单独验证。

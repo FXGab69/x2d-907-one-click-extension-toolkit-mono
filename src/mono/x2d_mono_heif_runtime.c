@@ -108,6 +108,11 @@ static int plane(const void *desc, size_t field, uint8_t *base,
 }
 
 static int discard(x2d_mono_heif_runtime *r) {
+    if (!r->private_ownership_verified) {
+        r->poisoned = 1;
+        r->in_flight = 0;
+        return -1;
+    }
     void *h = handle(r->private_descriptor, r->contract.vmem_offset);
     if (h && r->memory->free_frame(r->user, r->private_descriptor) != 0) {
         r->poisoned = 1;
@@ -115,8 +120,17 @@ static int discard(x2d_mono_heif_runtime *r) {
     }
     set_handle(r->private_descriptor, r->contract.vmem_offset, NULL);
     r->in_flight = 0;
+    r->private_ownership_verified = 0;
     memset(&r->neutralize, 0, sizeof r->neutralize);
     return 0;
+}
+
+static void reject_unverified(x2d_mono_heif_runtime *r,
+                              void *source_handle) {
+    if (handle(r->private_descriptor, r->contract.vmem_offset) == source_handle)
+        set_handle(r->private_descriptor, r->contract.vmem_offset, NULL);
+    r->poisoned = 1;
+    r->in_flight = 0;
 }
 
 static int acquire(void *opaque, const void *stock_frame,
@@ -136,11 +150,12 @@ static int acquire(void *opaque, const void *stock_frame,
     if (!source_handle || r->memory->sync(r->user, source_handle,
                                            c->source_read_sync_mode) != 0)
         return -1;
+    r->private_ownership_verified = 0;
     memcpy(r->private_descriptor, stock_frame, c->descriptor_size);
     set_handle(r->private_descriptor, c->vmem_offset, NULL);
     if (r->memory->deep_copy(r->user, r->private_descriptor, stock_frame,
                              c->allocation_flags) != 0) {
-        (void)discard(r);
+        reject_unverified(r, source_handle);
         return -1;
     }
     void *private_handle = handle(r->private_descriptor, c->vmem_offset);
@@ -151,7 +166,7 @@ static int acquire(void *opaque, const void *stock_frame,
         word(r->private_descriptor, c->height_offset) != height ||
         r->memory->sync(r->user, private_handle,
                         c->source_read_sync_mode) != 0) {
-        (void)discard(r);
+        reject_unverified(r, source_handle);
         return -1;
     }
     uint8_t *src = NULL, *dst = NULL;
@@ -161,9 +176,10 @@ static int acquire(void *opaque, const void *stock_frame,
         r->memory->map(r->user, source_handle, (void **)&src) ||
         r->memory->map(r->user, private_handle, (void **)&dst) ||
         !disjoint(src, src_size, dst, dst_size)) {
-        (void)discard(r);
+        reject_unverified(r, source_handle);
         return -1;
     }
+    r->private_ownership_verified = 1;
     cfv_heif_neutralize_request q = {0};
     q.width = width;
     q.height = height;

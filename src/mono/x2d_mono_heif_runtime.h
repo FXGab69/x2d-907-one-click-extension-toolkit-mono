@@ -30,7 +30,7 @@ typedef struct {
     void *private_descriptor;
     x2d_mono_heif_contract contract;
     cfv_heif_neutralize_request neutralize;
-    int in_flight, poisoned;
+    int in_flight, poisoned, private_ownership_verified;
 } x2d_mono_heif_runtime;
 
 /* Call only with a mapped, CPU-synchronized private UV plane and a checked

@@ -8,6 +8,7 @@
 static uint8_t stock[768], private_pixels[768], frame[0x90], output[0x90];
 static uint8_t private_frame[0x90];
 static int encoder_calls, releases, stock_calls, mode_enabled, requested, ready_clears, ready_sets;
+static int copy_alias_mode;
 int x2d_mono_runtime_enabled(void) { return mode_enabled; }
 int x2d_mono_runtime_requested(void) { return requested; }
 void x2d_mono_runtime_ready(unsigned route, int ready) {
@@ -36,6 +37,10 @@ static void source_pattern(int ambiguous) {
 static int deep_copy(void *u, void *destination, const void *source, int flags) {
     (void)u; (void)source;
     assert(flags == 7);
+    if (copy_alias_mode) {
+        setptr(destination, 0x20, stock);
+        return copy_alias_mode == 2 ? -1 : 0;
+    }
     memcpy(private_pixels, stock, sizeof stock);
     setptr(destination, 0x20, private_pixels);
     return 0;
@@ -54,7 +59,11 @@ static int sync_mem(void *u, void *h, int mode) {
         ? 0 : -1;
 }
 static int free_frame(void *u, void *f) {
-    (void)u; assert(f == private_frame); ++releases; return 0;
+    (void)u; assert(f == private_frame);
+    void *h = NULL;
+    memcpy(&h, (uint8_t *)f + 0x20, sizeof h);
+    assert(h != stock);
+    ++releases; return 0;
 }
 static int complete(void *u) { (void)u; return 0; }
 static int vendor(void *engine, const void *params) {
@@ -147,5 +156,25 @@ int main(void) {
     assert(ready_clears == 1);
     assert(x2d_mono_heif_detect_packing(stock+512, 256, 96, 2, 128) ==
            CFV_HEIF_PACKING_UNVERIFIED);
+    source_pattern(0);
+    for (int mode = 1; mode <= 2; ++mode) {
+        x2d_mono_heif_runtime alias_runtime = runtime;
+        alias_runtime.poisoned = 0;
+        alias_runtime.in_flight = 0;
+        alias_runtime.private_ownership_verified = 0;
+        memset(private_frame, 0, sizeof private_frame);
+        cfv_mono_heif_bridge alias_bridge;
+        cfv_mono_heif_bridge_init(&alias_bridge, vendor,
+                                 x2d_mono_heif_runtime_ops(), &alias_runtime);
+        copy_alias_mode = mode;
+        int before = releases;
+        assert(cfv_mono_heif_bridge_encfrm(&alias_bridge, frame, &params, 1) ==
+               CFV_MONO_HEIF_REJECTED);
+        void *h = NULL;
+        memcpy(&h, private_frame + 0x20, sizeof h);
+        assert(h == NULL && releases == before && alias_runtime.poisoned);
+        assert(memcmp(stock, original, sizeof stock) == 0);
+    }
+    copy_alias_mode = 0;
     puts("X2D HEIF private runtime: OK (mocked vendor ABI)");
 }
